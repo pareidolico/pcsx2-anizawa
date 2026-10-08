@@ -55,8 +55,15 @@ set "PATH=%PATH%;%INSTALLDIR%\bin"
 
 cd "%BUILDDIR%"
 
-set QT=6.12.0
-set QTMINOR=6.12
+rem Qt 6.8.4 is the newest version the Windows 7/8/8.1 backport (qt6windows7) supports.
+rem The open source 6.8.4 release is only tagged in git, so fetch it from the official mirrors, pinned by commit.
+set QT=6.8.4
+set QTBASE_COMMIT=ed77a3ca9ef1bf5e33b6f32ea41110734fb14e88
+set QTIMAGEFORMATS_COMMIT=83a080842cbef04cb299b5d7a7bd5ca8f689404d
+set QTSVG_COMMIT=ebff20bb7389fbec8b773241db41b0ce1b4cf679
+set QTTOOLS_COMMIT=fd835497a2c0d441ea08a35b09b6abd2b5c29b48
+set QTTRANSLATIONS_COMMIT=ba2badad1dcb34f0755bc79a27da0485991c5a77
+set QT6WINDOWS7_COMMIT=3df3aac758177b28843c4d1511a2bd7751fe82b6
 set QTAPNG=1.3.0
 
 set FFMPEG=9.0.1
@@ -95,11 +102,6 @@ set AGILITYSDK=1.619.5
 set DXHEADERS=1.619.5
 set DXC=1.9.2609.5
 
-call :downloadfile "qtbase-everywhere-src-%QT%.zip" "https://download.qt.io/official_releases/qt/%QTMINOR%/%QT%/submodules/qtbase-everywhere-src-%QT%.zip" 0529901575c413e34ded504eeda177c4a6dfd0dff1e39ed52c811dc5204b43c7 || goto error
-call :downloadfile "qtimageformats-everywhere-src-%QT%.zip" "https://download.qt.io/official_releases/qt/%QTMINOR%/%QT%/submodules/qtimageformats-everywhere-src-%QT%.zip" 664de2ba60a1e74105da844c061688ff5e6f8f046d5dd98e2d6b6ad3c553b4ca || goto error
-call :downloadfile "qtsvg-everywhere-src-%QT%.zip" "https://download.qt.io/official_releases/qt/%QTMINOR%/%QT%/submodules/qtsvg-everywhere-src-%QT%.zip" a633ce8978543a7c72c1381d3a52bb424e8ba629882dfb39dfd29508cb4f125d || goto error
-call :downloadfile "qttools-everywhere-src-%QT%.zip" "https://download.qt.io/official_releases/qt/%QTMINOR%/%QT%/submodules/qttools-everywhere-src-%QT%.zip" 42e4aee011c429c1e6a51cb40f398b5126c8185ab4f493f9e0ce3c4cbce6f4b7 || goto error
-call :downloadfile "qttranslations-everywhere-src-%QT%.zip" "https://download.qt.io/official_releases/qt/%QTMINOR%/%QT%/submodules/qttranslations-everywhere-src-%QT%.zip" 286f0ca3ad669bc2d6fec0e209a797a08049d037c7a167e60eb3b4a640405aa5 || goto error
 call :downloadfile "QtApng-%QTAPNG%.zip" "https://github.com/jurplel/QtApng/archive/refs/tags/%QTAPNG%.zip" 5176082cdd468047a7eb1ec1f106b032f57df207aa318d559b29606b00d159ac || goto error
 
 call :downloadfile "ffmpeg-%FFMPEG%.tar.xz" "https://ffmpeg.org/releases/ffmpeg-%FFMPEG%.tar.xz" cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635 || goto error
@@ -111,7 +113,6 @@ call :downloadfile "libvpl-%LIBVPL%.zip" "https://github.com/intel/libvpl/archiv
 call :downloadfile "nv-codec-headers-%NVENC%.tar.gz" "https://github.com/FFmpeg/nv-codec-headers/releases/download/n%NVENC%/nv-codec-headers-%NVENC%.tar.gz" 13da39edb3a40ed9713ae390ca89faa2f1202c9dda869ef306a8d4383e242bee || goto error
 call :downloadfile "opus-%LIBOPUS%.tar.gz" "https://downloads.xiph.org/releases/opus/opus-%LIBOPUS%.tar.gz" 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1 || goto error
 call :downloadfile "SVT-AV1-v%LIBSVTAV1%.zip" "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v%LIBSVTAV1%/SVT-AV1-v%LIBSVTAV1%.zip" 007d1bd64ae85eaeea51db7465c4b360d115dc2d33d2ad42491c7d2ae7a9124e || goto error
-call :downloadfile "x264-%LIBX264%.zip" "https://code.videolan.org/videolan/x264/-/archive/%LIBX264%.zip" d95d059eff81cc565165cd058b66e208f0cc9874106a8fe94a811a66cf8a85a2 || goto error
 
 call :downloadfile "freetype-%FREETYPE%.tar.gz" https://sourceforge.net/projects/freetype/files/freetype2/%FREETYPE%/freetype-%FREETYPE%.tar.gz/download e61b31ab26358b946e767ed7eb7f4bb2e507da1cfefeb7a8861ace7fd5c899a1 || goto error
 call :downloadfile "harfbuzz-%HARFBUZZ%.zip" https://github.com/harfbuzz/harfbuzz/archive/refs/tags/%HARFBUZZ%.zip bb2f83255706b1c92d731541c7cefaf98bb5b93e8f76d16f6deda05225ff20ee || goto error
@@ -229,8 +230,8 @@ set CC=cl
 set CXX=cl
 
 echo "Installing libx264"
-rmdir /S /Q "x264-%LIBX264%"
-%SEVENZIP% x "x264-%LIBX264%.zip" || goto error
+rem code.videolan.org serves a challenge page to CI runners, so use the GitHub mirror at the same commit.
+call :gitcheckout "https://github.com/mirror/x264.git" %LIBX264% "x264-%LIBX264%" || goto error
 cd "x264-%LIBX264%" || goto error
 if !FOUND_NASM!==0 (
   set LIBX264_NASM=--disable-asm
@@ -243,8 +244,12 @@ echo.
 
 echo "Installing FFmpeg..."
 rmdir /S /Q "ffmpeg-%FFMPEG%"
-tar xf "ffmpeg-%FFMPEG%.tar.xz" || goto error
-cd "ffmpeg-%FFMPEG%"
+rem The tar.exe on windows-2022 hangs on .tar.xz, so unpack with 7-Zip in two steps instead.
+%SEVENZIP% x "ffmpeg-%FFMPEG%.tar.xz" -aoa || goto error
+%SEVENZIP% x "ffmpeg-%FFMPEG%.tar" -aoa || goto error
+del "ffmpeg-%FFMPEG%.tar"
+cd "ffmpeg-%FFMPEG%" || goto error
+echo "Patching FFmpeg..."
 %PATCH% -p1 < "%SCRIPTDIR%\ffmpeg-configure-escape.patch" || goto error
 if not !FOUND_NASM!==1 (
   rem MSVC LTO gives linker errors when building without nasm.
@@ -258,6 +263,7 @@ set VULKAN_INCLUDE=%INSTALLDIR:\=/%/../3rdparty/vulkan/include
 rem libvpl needs to have advapi32.lib & ole32.lib added as extra libs.
 rem For some reason QSV requires the hevc parser on windows.
 rem --enable-small removes the display names of codecs, so instead we specify optflag for minsize
+echo "Configuring FFmpeg..."
 %BASH% configure --prefix="%INSTALLDIR%" --disable-all --disable-autodetect --disable-static --enable-shared --disable-debug ^
   --toolchain=msvc --extra-ldflags="-LTCG" --extra-libs="advapi32.lib ole32.lib" !FFMPEG_NASM! --pkg-config="%INSTALLDIR%\bin\pkgconf.exe" ^
   --extra-cflags="-MD -GL -I!VULKAN_INCLUDE!" --extra-cxxflags="-MD -GL -I!VULKAN_INCLUDE!" --optflags="-O1" ^
@@ -273,6 +279,7 @@ rem --enable-small removes the display names of codecs, so instead we specify op
   --enable-parser=hevc ^
   --enable-muxer=avi,matroska,mov,mp3,mp4,wav ^
   --enable-protocol=file || goto error
+echo "Building FFmpeg..."
 !MAKE_EXE! -j%NUMBER_OF_PROCESSORS% || goto error
 !MAKE_EXE! install || goto error
 cd ..
@@ -381,18 +388,21 @@ if %DEBUG%==1 (
   set QTBUILDSPEC=-DCMAKE_BUILD_TYPE=MinSizeRel -G Ninja
 )
 
+call :gitcheckout "https://github.com/crystalidea/qt6windows7.git" %QT6WINDOWS7_COMMIT% "qt6windows7" || goto error
+
 echo Building Qt base...
-rmdir /S /Q "qtbase-everywhere-src-%QT%"
-%SEVENZIP% x "qtbase-everywhere-src-%QT%.zip" || goto error
+call :gitcheckout "https://github.com/qt/qtbase.git" %QTBASE_COMMIT% "qtbase-everywhere-src-%QT%" || goto error
 cd "qtbase-everywhere-src-%QT%" || goto error
+rem Stock Qt 6 only runs on Windows 10+. Copy the qt6windows7 patched sources over qtbase so it runs on Windows 8.1.
+echo Applying qt6windows7 patches...
+xcopy "%BUILDDIR%\qt6windows7\qtbase\*" . /E /Y || goto error
 cmake -B build -DFEATURE_sql=OFF -DCMAKE_INSTALL_PREFIX="%INSTALLDIR%" %FORCEPDB% -DINPUT_gui=yes -DINPUT_widgets=yes -DINPUT_ssl=yes -DINPUT_openssl=no -DINPUT_schannel=yes -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON -DQT_FEATURE_windows_ioring=OFF %QTBUILDSPEC% || goto error
 cmake --build build --parallel || goto error
 ninja -C build install || goto error
 cd .. || goto error
 
 echo Building Qt SVG...
-rmdir /S /Q "qtsvg-everywhere-src-%QT%"
-%SEVENZIP% x "qtsvg-everywhere-src-%QT%.zip" || goto error
+call :gitcheckout "https://github.com/qt/qtsvg.git" %QTSVG_COMMIT% "qtsvg-everywhere-src-%QT%" || goto error
 cd "qtsvg-everywhere-src-%QT%" || goto error
 mkdir build || goto error
 cd build || goto error
@@ -402,8 +412,7 @@ ninja install || goto error
 cd ..\.. || goto error
 
 echo Building Qt Image Formats...
-rmdir /S /Q "qtimageformats-everywhere-src-%QT%"
-%SEVENZIP% x "qtimageformats-everywhere-src-%QT%.zip" || goto error
+call :gitcheckout "https://github.com/qt/qtimageformats.git" %QTIMAGEFORMATS_COMMIT% "qtimageformats-everywhere-src-%QT%" || goto error
 cd "qtimageformats-everywhere-src-%QT%" || goto error
 mkdir build || goto error
 cd build || goto error
@@ -413,8 +422,7 @@ ninja install || goto error
 cd ..\.. || goto error
 
 echo Building Qt Tools...
-rmdir /S /Q "qttools-everywhere-src-%QT%"
-%SEVENZIP% x "qttools-everywhere-src-%QT%.zip" || goto error
+call :gitcheckout "https://github.com/qt/qttools.git" %QTTOOLS_COMMIT% "qttools-everywhere-src-%QT%" || goto error
 cd "qttools-everywhere-src-%QT%" || goto error
 mkdir build || goto error
 cd build || goto error
@@ -424,8 +432,7 @@ ninja install || goto error
 cd ..\.. || goto error
 
 echo Building Qt Translations...
-rmdir /S /Q "qttranslations-everywhere-src-%QT%"
-%SEVENZIP% x "qttranslations-everywhere-src-%QT%.zip" || goto error
+call :gitcheckout "https://github.com/qt/qttranslations.git" %QTTRANSLATIONS_COMMIT% "qttranslations-everywhere-src-%QT%" || goto error
 cd "qttranslations-everywhere-src-%QT%" || goto error
 mkdir build || goto error
 cd build || goto error
@@ -556,6 +563,15 @@ exit 0
 echo Failed with error #%errorlevel%.
 pause
 exit %errorlevel%
+
+rem Fetches commit %2 of repository %1 into directory %3. Git verifies the content against the commit hash.
+:gitcheckout
+rmdir /S /Q "%~3"
+git init -q "%~3" || exit /B 1
+git -C "%~3" fetch -q --depth 1 "%~1" %~2 || exit /B 1
+git -C "%~3" checkout -q FETCH_HEAD || exit /B 1
+echo Fetched %~1 at %~2.
+exit /B 0
 
 :downloadfile
 if not exist "%~1" (

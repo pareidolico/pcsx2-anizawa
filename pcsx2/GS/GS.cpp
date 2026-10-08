@@ -38,6 +38,7 @@
 #ifdef _WIN32
 
 #include "GS/Renderers/DX11/GSDevice11.h"
+#include "common/Windows/WinPlaceholderMemory.h"
 #include "GS/Renderers/DX12/GSDevice12.h"
 #include "GS/Renderers/DX11/D3D.h"
 
@@ -975,8 +976,44 @@ void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 		return nullptr;
 	}
 
+	const WinPlaceholderMemory::Functions* ph = WinPlaceholderMemory::Get();
+	if (!ph)
+	{
+		// No placeholders (Windows 8.1). Find a free range, release it, then map the views into it.
+		// Another thread can grab the range in between, so retry a few times. Needs proper testing.
+		for (u32 attempt = 0; attempt < 16; attempt++)
+		{
+			u8* base = static_cast<u8*>(VirtualAlloc(nullptr, repeat * size, MEM_RESERVE, PAGE_NOACCESS));
+			if (!base)
+				break;
+			VirtualFree(base, 0, MEM_RELEASE);
+
+			size_t mapped = 0;
+			for (; mapped < repeat; mapped++)
+			{
+				u8* addr = base + mapped * size;
+				if (MapViewOfFileEx(s_fh, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, size, addr) != addr)
+					break;
+			}
+
+			if (mapped == repeat)
+			{
+				DbgCon.WriteLn("fifo_alloc(): Mapped %zu repeats of %zu bytes at %p.", repeat, size, base);
+				return base;
+			}
+
+			for (size_t i = 0; i < mapped; i++)
+				UnmapViewOfFile(base + i * size);
+		}
+
+		Console.Error("Failed to map wrapped memory of size %zu. WIN API ERROR:%u", size, GetLastError());
+		CloseHandle(s_fh);
+		s_fh = NULL;
+		return nullptr;
+	}
+
 	// Reserve the whole area with repeats.
-	u8* base = static_cast<u8*>(VirtualAlloc2(
+	u8* base = static_cast<u8*>(ph->VirtualAlloc2(
 		GetCurrentProcess(), nullptr, repeat * size,
 		MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
 		nullptr, 0));
@@ -988,13 +1025,13 @@ void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 			// Everything except the last needs the placeholders split to map over them. Then map the same file over the region.
 			u8* addr = base + i * size;
 			if ((i != (repeat - 1) && !VirtualFreeEx(GetCurrentProcess(), addr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) ||
-				!MapViewOfFile3(s_fh, GetCurrentProcess(), addr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
+				!ph->MapViewOfFile3(s_fh, GetCurrentProcess(), addr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
 			{
 				Console.Error("Failed to map repeat %zu of size %zu.", i, size);
 				okay = false;
 
 				for (size_t j = 0; j < i; j++)
-					UnmapViewOfFile2(GetCurrentProcess(), addr, MEM_PRESERVE_PLACEHOLDER);
+					ph->UnmapViewOfFile2(GetCurrentProcess(), addr, MEM_PRESERVE_PLACEHOLDER);
 			}
 		}
 
@@ -1017,10 +1054,20 @@ void GSFreeWrappedMemory(void* ptr, size_t size, size_t repeat)
 {
 	pxAssertRel(s_fh, "Has a file mapping");
 
+	const WinPlaceholderMemory::Functions* ph = WinPlaceholderMemory::Get();
+	if (!ph)
+	{
+		for (size_t i = 0; i < repeat; i++)
+			UnmapViewOfFile((u8*)ptr + i * size);
+
+		s_fh = NULL;
+		return;
+	}
+
 	for (size_t i = 0; i < repeat; i++)
 	{
 		u8* addr = (u8*)ptr + i * size;
-		UnmapViewOfFile2(GetCurrentProcess(), addr, MEM_PRESERVE_PLACEHOLDER);
+		ph->UnmapViewOfFile2(GetCurrentProcess(), addr, MEM_PRESERVE_PLACEHOLDER);
 	}
 
 	VirtualFreeEx(GetCurrentProcess(), ptr, 0, MEM_RELEASE);

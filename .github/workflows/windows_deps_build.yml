@@ -6,7 +6,8 @@ on:
       os:
         required: false
         type: string
-        default: windows-2025-vs2026
+        # windows-2022 has VS 2022. The VS 2026 runtime only supports Windows 10+, which breaks Windows 8.1.
+        default: windows-2022
       platform:
         required: false
         type: string
@@ -17,7 +18,7 @@ jobs:
     name: "Cache Dependencies"
     runs-on: ${{ inputs.os }}
     # Set some sort of timeout in the event of run-away builds.  We are limited on concurrent jobs so, get rid of them.
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
 

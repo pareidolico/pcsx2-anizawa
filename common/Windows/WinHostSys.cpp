@@ -9,6 +9,7 @@
 #include "common/Error.h"
 #include "common/RedtapeWindows.h"
 #include "common/StringUtil.h"
+#include "common/Windows/WinPlaceholderMemory.h"
 
 #include "fmt/format.h"
 
@@ -98,6 +99,109 @@ void HostSys::FlushInstructionCache(void* address, u32 size)
 
 #endif
 
+const WinPlaceholderMemory::Functions* WinPlaceholderMemory::Get()
+{
+	static const Functions* s_functions = []() -> const Functions* {
+		static Functions funcs = {};
+
+		const HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
+		if (!kernelbase)
+			return nullptr;
+
+		funcs.VirtualAlloc2 = reinterpret_cast<decltype(funcs.VirtualAlloc2)>(GetProcAddress(kernelbase, "VirtualAlloc2"));
+		funcs.MapViewOfFile3 = reinterpret_cast<decltype(funcs.MapViewOfFile3)>(GetProcAddress(kernelbase, "MapViewOfFile3"));
+		funcs.UnmapViewOfFile2 = reinterpret_cast<decltype(funcs.UnmapViewOfFile2)>(GetProcAddress(kernelbase, "UnmapViewOfFile2"));
+		if (!funcs.VirtualAlloc2 || !funcs.MapViewOfFile3 || !funcs.UnmapViewOfFile2)
+		{
+			Console.Warning("Memory placeholders are not supported by this OS, fastmem will be unavailable.");
+			return nullptr;
+		}
+
+		return &funcs;
+	}();
+
+	return s_functions;
+}
+
+bool HostSys::SupportsMemoryPlaceholders()
+{
+	return (WinPlaceholderMemory::Get() != nullptr);
+}
+
+// Fallback for systems without placeholders (Windows 8.1). Each unmapped range in the area is kept as its own
+// plain reservation. Reservations can only be released whole, so mapping over part of one means releasing it,
+// re-reserving the leftovers, then mapping into the gap. Another thread could grab the address in between, in
+// which case the map fails. Needs proper testing.
+static size_t GetAllocationGranularity()
+{
+	static const size_t granularity = []() {
+		SYSTEM_INFO si = {};
+		GetSystemInfo(&si);
+		return static_cast<size_t>(si.dwAllocationGranularity);
+	}();
+	return granularity;
+}
+
+static bool ReleaseReservationsInRange(u8* start, u8* end)
+{
+	u8* addr = start;
+	while (addr < end)
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0)
+			return false;
+
+		if (mbi.State == MEM_FREE)
+		{
+			addr = static_cast<u8*>(mbi.BaseAddress) + mbi.RegionSize;
+			continue;
+		}
+		else if (mbi.State != MEM_RESERVE)
+		{
+			Console.Error("(SharedMemoryMappingArea) Range at %p is already mapped", addr);
+			return false;
+		}
+
+		// Reservations are never partially committed here, so the region at the allocation base spans all of it.
+		u8* const res_start = static_cast<u8*>(mbi.AllocationBase);
+		if (VirtualQuery(res_start, &mbi, sizeof(mbi)) == 0)
+			return false;
+		u8* const res_end = res_start + mbi.RegionSize;
+
+		if (!VirtualFree(res_start, 0, MEM_RELEASE))
+		{
+			Console.Error("(SharedMemoryMappingArea) VirtualFree() failed: %u", GetLastError());
+			return false;
+		}
+
+		if (res_start < start && !VirtualAlloc(res_start, start - res_start, MEM_RESERVE, PAGE_NOACCESS))
+			Console.Warning("(SharedMemoryMappingArea) Failed to re-reserve %p: %u", res_start, GetLastError());
+		if (res_end > end && !VirtualAlloc(end, res_end - end, MEM_RESERVE, PAGE_NOACCESS))
+			Console.Warning("(SharedMemoryMappingArea) Failed to re-reserve %p: %u", end, GetLastError());
+
+		addr = res_end;
+	}
+
+	return true;
+}
+
+static void ReleaseAllReservations(u8* base, size_t size)
+{
+	u8* addr = base;
+	u8* const end = base + size;
+	while (addr < end)
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0)
+			break;
+
+		if (mbi.State != MEM_FREE && static_cast<u8*>(mbi.AllocationBase) >= base)
+			VirtualFree(mbi.AllocationBase, 0, MEM_RELEASE);
+
+		addr = static_cast<u8*>(mbi.BaseAddress) + mbi.RegionSize;
+	}
+}
+
 SharedMemoryMappingArea::SharedMemoryMappingArea(u8* base_ptr, size_t size, size_t num_pages)
 	: m_base_ptr(base_ptr)
 	, m_size(size)
@@ -109,6 +213,12 @@ SharedMemoryMappingArea::SharedMemoryMappingArea(u8* base_ptr, size_t size, size
 SharedMemoryMappingArea::~SharedMemoryMappingArea()
 {
 	pxAssertRel(m_num_mappings == 0, "No mappings left");
+
+	if (!WinPlaceholderMemory::Get())
+	{
+		ReleaseAllReservations(m_base_ptr, m_size);
+		return;
+	}
 
 	// hopefully this will be okay, and we don't need to coalesce all the placeholders...
 	if (!VirtualFreeEx(GetCurrentProcess(), m_base_ptr, 0, MEM_RELEASE))
@@ -147,7 +257,10 @@ std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t 
 {
 	pxAssertRel(Common::IsAlignedPow2(size, __pagesize), "Size is page aligned");
 
-	void* alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
+	const WinPlaceholderMemory::Functions* ph = WinPlaceholderMemory::Get();
+	void* alloc = ph ?
+	                  ph->VirtualAlloc2(GetCurrentProcess(), nullptr, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0) :
+	                  VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS);
 	if (!alloc)
 		return nullptr;
 
@@ -161,6 +274,10 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 	const size_t map_offset = static_cast<u8*>(map_base) - m_base_ptr;
 	pxAssert(Common::IsAlignedPow2(map_offset, __pagesize));
 	pxAssert(Common::IsAlignedPow2(map_size, __pagesize));
+
+	const WinPlaceholderMemory::Functions* ph = WinPlaceholderMemory::Get();
+	if (!ph)
+		return MapWithoutPlaceholders(file_handle, file_offset, map_base, map_size, mode);
 
 	// should be a placeholder. unless there's some other mapping we didn't free.
 	PlaceholderMap::iterator phit = FindPlaceholder(map_offset);
@@ -203,7 +320,7 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 	// actually do the mapping, replacing the placeholder on the range
 	if (file_handle)
 	{
-		if (!MapViewOfFile3(static_cast<HANDLE>(file_handle), GetCurrentProcess(),
+		if (!ph->MapViewOfFile3(static_cast<HANDLE>(file_handle), GetCurrentProcess(),
 				map_base, file_offset, map_size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
 		{
 			Console.Error("(SharedMemoryMappingArea) MapViewOfFile3() failed: %u", GetLastError());
@@ -212,7 +329,7 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 	}
 	else
 	{
-		if (!VirtualAlloc2(GetCurrentProcess(), map_base, map_size, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
+		if (!ph->VirtualAlloc2(GetCurrentProcess(), map_base, map_size, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
 		{
 			Console.Error("(SharedMemoryMappingArea) VirtualAlloc2() failed: %u", GetLastError());
 			return nullptr;
@@ -231,6 +348,58 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 	return static_cast<u8*>(map_base);
 }
 
+u8* SharedMemoryMappingArea::MapWithoutPlaceholders(void* file_handle, size_t file_offset, void* map_base, size_t map_size, const PageProtectionMode& mode)
+{
+	const size_t granularity = GetAllocationGranularity();
+	if (!Common::IsAlignedPow2(reinterpret_cast<uptr>(map_base), granularity) ||
+		!Common::IsAlignedPow2(map_size, granularity) || !Common::IsAlignedPow2(file_offset, granularity))
+	{
+		Console.Error("(SharedMemoryMappingArea) Mapping %p (%zu bytes) is not aligned to %zu bytes", map_base, map_size, granularity);
+		return nullptr;
+	}
+
+	u8* const start = static_cast<u8*>(map_base);
+	u8* const end = start + map_size;
+	if (!ReleaseReservationsInRange(start, end))
+		return nullptr;
+
+	void* ret;
+	if (file_handle)
+	{
+		ret = MapViewOfFileEx(static_cast<HANDLE>(file_handle), FILE_MAP_READ | FILE_MAP_WRITE,
+			static_cast<DWORD>(static_cast<u64>(file_offset) >> 32), static_cast<DWORD>(file_offset), map_size, map_base);
+	}
+	else
+	{
+		ret = VirtualAlloc(map_base, map_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	}
+
+	if (ret != map_base)
+	{
+		Console.Error("(SharedMemoryMappingArea) Failed to map %p (%zu bytes): %u", map_base, map_size, GetLastError());
+		if (ret)
+		{
+			if (file_handle)
+				UnmapViewOfFile(ret);
+			else
+				VirtualFree(ret, 0, MEM_RELEASE);
+		}
+		VirtualAlloc(map_base, map_size, MEM_RESERVE, PAGE_NOACCESS);
+		return nullptr;
+	}
+
+	const DWORD prot = ConvertToWinApi(mode);
+	if (prot != PAGE_READWRITE)
+	{
+		DWORD old_prot;
+		if (!VirtualProtect(map_base, map_size, prot, &old_prot))
+			pxFail("Failed to protect memory mapping");
+	}
+
+	m_num_mappings++;
+	return start;
+}
+
 bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size, bool is_file)
 {
 	pxAssert(static_cast<u8*>(map_base) >= m_base_ptr && static_cast<u8*>(map_base) < (m_base_ptr + m_size));
@@ -239,10 +408,28 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size, bool is_fil
 	pxAssert(Common::IsAlignedPow2(map_offset, __pagesize));
 	pxAssert(Common::IsAlignedPow2(map_size, __pagesize));
 
+	const WinPlaceholderMemory::Functions* ph = WinPlaceholderMemory::Get();
+	if (!ph)
+	{
+		const BOOL res = is_file ? UnmapViewOfFile(map_base) : VirtualFree(map_base, 0, MEM_RELEASE);
+		if (!res)
+		{
+			Console.Error("(SharedMemoryMappingArea) Failed to unmap %p: %u", map_base, GetLastError());
+			return false;
+		}
+
+		// Keep the hole reserved so nothing else gets allocated inside the area.
+		if (!VirtualAlloc(map_base, map_size, MEM_RESERVE, PAGE_NOACCESS))
+			Console.Warning("(SharedMemoryMappingArea) Failed to re-reserve %p: %u", map_base, GetLastError());
+
+		m_num_mappings--;
+		return true;
+	}
+
 	// unmap the specified range
 	if (is_file)
 	{
-		if (!UnmapViewOfFile2(GetCurrentProcess(), map_base, MEM_PRESERVE_PLACEHOLDER))
+		if (!ph->UnmapViewOfFile2(GetCurrentProcess(), map_base, MEM_PRESERVE_PLACEHOLDER))
 		{
 			Console.Error("(SharedMemoryMappingArea) UnmapViewOfFile2() failed: %u", GetLastError());
 			return false;

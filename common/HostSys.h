@@ -121,6 +121,12 @@ namespace HostSys
 
 	/// Returns the size of a cache line for the current host.
 	size_t GetRuntimeCacheLineSize();
+
+#ifdef _WIN32
+	/// Returns true if the OS supports memory placeholders (Windows 10 1803 and newer).
+	/// Without them, views can only be mapped at allocation granularity (64KB), so fastmem isn't possible.
+	bool SupportsMemoryPlaceholders();
+#endif
 } // namespace HostSys
 
 namespace PageFaultHandler
@@ -165,6 +171,7 @@ private:
 	using PlaceholderMap = std::map<size_t, size_t>;
 
 	PlaceholderMap::iterator FindPlaceholder(size_t page);
+	u8* MapWithoutPlaceholders(void* file_handle, size_t file_offset, void* map_base, size_t map_size, const PageProtectionMode& mode);
 
 	PlaceholderMap m_placeholder_ranges;
 #endif

@@ -3,6 +3,7 @@
 
 #include "common/CocoaTools.h"
 #include "common/FileSystem.h"
+#include "common/HostSys.h"
 #include "common/Path.h"
 #include "common/SettingsInterface.h"
 #include "common/SettingsWrapper.h"
@@ -532,6 +533,12 @@ void Pcsx2Config::RecompilerOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(EnableVU1);
 	SettingsWrapBitBool(EnableFastmem);
 	SettingsWrapBitBool(PauseOnTLBMiss);
+
+#ifdef _WIN32
+	// Fastmem maps individual 4KB pages, which needs memory placeholders (Windows 10 1803+).
+	if (!HostSys::SupportsMemoryPlaceholders())
+		EnableFastmem = false;
+#endif
 
 	SettingsWrapBitBool(vu0Overflow);
 	SettingsWrapBitBool(vu0ExtraOverflow);

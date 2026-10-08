@@ -1195,7 +1195,15 @@ if(WIN32)
 		opengl32.lib
 		comsuppw.lib
 		dwmapi.lib
-		OneCore.lib
+		delayimp.lib
+	)
+
+	# Windows 8.1 has no D3D12, and DXC/PIX are only used by the D3D12 renderer.
+	# Delay load them so the executable still starts there. D3D::IsD3D12Available() guards the calls.
+	target_link_options(PCSX2_FLAGS INTERFACE
+		/DELAYLOAD:d3d12.dll
+		/DELAYLOAD:dxcompiler.dll
+		/DELAYLOAD:WinPixEventRuntime.dll
 	)
 else()
 	target_link_libraries(PCSX2_FLAGS INTERFACE

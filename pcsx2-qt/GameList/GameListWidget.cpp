@@ -79,27 +79,33 @@ public:
 
 	void setFilterType(GameList::EntryType type)
 	{
-		beginFilterChange();
-		m_filter_type = type;
-		endFilterChange(Direction::Rows);
+		ChangeRowsFilter([&]() { m_filter_type = type; });
 	}
 	void setFilterRegion(GameList::Region region)
 	{
-		beginFilterChange();
-		m_filter_region = region;
-		endFilterChange(Direction::Rows);
+		ChangeRowsFilter([&]() { m_filter_region = region; });
 	}
 	void setFilterName(const QString& name)
 	{
-		beginFilterChange();
-		m_filter_name = name;
-		endFilterChange(Direction::Rows);
+		ChangeRowsFilter([&]() { m_filter_name = name; });
 	}
 	void setFilterFavoritesOnly(bool enabled)
 	{
+		ChangeRowsFilter([&]() { m_filter_favorites_only = enabled; });
+	}
+
+	// beginFilterChange()/endFilterChange() need Qt 6.10, but the Windows 8.1 build uses Qt 6.8.
+	template <typename F>
+	void ChangeRowsFilter(F&& change)
+	{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 		beginFilterChange();
-		m_filter_favorites_only = enabled;
+		change();
 		endFilterChange(Direction::Rows);
+#else
+		change();
+		invalidateRowsFilter();
+#endif
 	}
 
 	bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const override

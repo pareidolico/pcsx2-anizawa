@@ -1,0 +1,47 @@
+name: Publish Windows 8.1 Release
+
+# One-off: publishes the MSVC builds from the Windows Builds run below as a release.
+# Runs when this file is pushed to the Windows 8.1 branch.
+on:
+  push:
+    branches:
+      - claude/peaceful-allen-j67c6l
+    paths:
+      - .github/workflows/publish_win81_release.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: "37758577579"
+      COMMIT: 4eec8d6c9d02ea5d22048aba6a77e3341c5c4d0e
+      TAG: win81-2026.10.08
+    steps:
+      - name: Download build artifacts
+        run: |
+          gh run download "$RUN_ID" -n "PCSX2-windows-Qt-x64-sse4-msvc-sha[4eec8d6]" -D sse4
+          gh run download "$RUN_ID" -n "PCSX2-windows-Qt-x64-avx2-msvc-sha[4eec8d6]" -D avx2
+          (cd sse4 && zip -qr ../PCSX2-win81-x64-sse4.zip .)
+          (cd avx2 && zip -qr ../PCSX2-win81-x64-avx2.zip .)
+          ls -la *.zip
+
+      - name: Create release
+        run: |
+          cat > notes.md <<'EOF'
+          PCSX2 built to run on Windows 8.1 (64-bit).
+
+          - **PCSX2-win81-x64-sse4.zip**: works on any x64 CPU with SSE4.1.
+          - **PCSX2-win81-x64-avx2.zip**: faster on CPUs with AVX2 (Intel Haswell / AMD Excavator and newer).
+
+          Requirements: the Visual C++ 2015-2022 x64 redistributable (https://aka.ms/vs/17/release/vc_redist.x64.exe) and an up-to-date Windows 8.1.
+
+          Notes: built against Qt 6.8.4 with the qt6windows7 backport. Fastmem is unavailable on Windows 8.1, and Direct3D 12 is unavailable there; Direct3D 11, OpenGL and Vulkan work.
+          EOF
+          gh release create "$TAG" PCSX2-win81-x64-sse4.zip PCSX2-win81-x64-avx2.zip \
+            --target "$COMMIT" --title "PCSX2 for Windows 8.1 (${COMMIT:0:7})" --notes-file notes.md
