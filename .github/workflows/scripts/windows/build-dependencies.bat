@@ -244,8 +244,12 @@ echo.
 
 echo "Installing FFmpeg..."
 rmdir /S /Q "ffmpeg-%FFMPEG%"
-tar xf "ffmpeg-%FFMPEG%.tar.xz" || goto error
-cd "ffmpeg-%FFMPEG%"
+rem The tar.exe on windows-2022 hangs on .tar.xz, so unpack with 7-Zip in two steps instead.
+%SEVENZIP% x "ffmpeg-%FFMPEG%.tar.xz" -aoa || goto error
+%SEVENZIP% x "ffmpeg-%FFMPEG%.tar" -aoa || goto error
+del "ffmpeg-%FFMPEG%.tar"
+cd "ffmpeg-%FFMPEG%" || goto error
+echo "Patching FFmpeg..."
 %PATCH% -p1 < "%SCRIPTDIR%\ffmpeg-configure-escape.patch" || goto error
 if not !FOUND_NASM!==1 (
   rem MSVC LTO gives linker errors when building without nasm.
@@ -259,6 +263,7 @@ set VULKAN_INCLUDE=%INSTALLDIR:\=/%/../3rdparty/vulkan/include
 rem libvpl needs to have advapi32.lib & ole32.lib added as extra libs.
 rem For some reason QSV requires the hevc parser on windows.
 rem --enable-small removes the display names of codecs, so instead we specify optflag for minsize
+echo "Configuring FFmpeg..."
 %BASH% configure --prefix="%INSTALLDIR%" --disable-all --disable-autodetect --disable-static --enable-shared --disable-debug ^
   --toolchain=msvc --extra-ldflags="-LTCG" --extra-libs="advapi32.lib ole32.lib" !FFMPEG_NASM! --pkg-config="%INSTALLDIR%\bin\pkgconf.exe" ^
   --extra-cflags="-MD -GL -I!VULKAN_INCLUDE!" --extra-cxxflags="-MD -GL -I!VULKAN_INCLUDE!" --optflags="-O1" ^
@@ -274,6 +279,7 @@ rem --enable-small removes the display names of codecs, so instead we specify op
   --enable-parser=hevc ^
   --enable-muxer=avi,matroska,mov,mp3,mp4,wav ^
   --enable-protocol=file || goto error
+echo "Building FFmpeg..."
 !MAKE_EXE! -j%NUMBER_OF_PROCESSORS% || goto error
 !MAKE_EXE! install || goto error
 cd ..

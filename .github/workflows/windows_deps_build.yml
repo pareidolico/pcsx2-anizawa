@@ -18,7 +18,7 @@ jobs:
     name: "Cache Dependencies"
     runs-on: ${{ inputs.os }}
     # Set some sort of timeout in the event of run-away builds.  We are limited on concurrent jobs so, get rid of them.
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
 
