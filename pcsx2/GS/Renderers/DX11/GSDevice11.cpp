@@ -178,9 +178,13 @@ bool GSDevice11::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 	else
 		Console.Error("D3D11: Failed to obtain adapter name.");
 
+	// IDXGIFactory5 doesn't exist on Windows 8.1, so no tearing there.
 	BOOL allow_tearing_supported = false;
-	hr = m_dxgi_factory->CheckFeatureSupport(
-		DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported, sizeof(allow_tearing_supported));
+	if (const auto factory5 = m_dxgi_factory.try_query<IDXGIFactory5>())
+	{
+		hr = factory5->CheckFeatureSupport(
+			DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported, sizeof(allow_tearing_supported));
+	}
 	m_allow_tearing_supported = (SUCCEEDED(hr) && allow_tearing_supported == TRUE);
 
 	if (!AcquireWindow(true) || (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain()))
@@ -830,8 +834,12 @@ bool GSDevice11::CreateSwapChain()
 	swap_chain_desc.SampleDesc.Count = 1;
 	swap_chain_desc.BufferCount = GetSwapChainBufferCount();
 	swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	// FLIP_DISCARD needs DXGI 1.4 (Windows 10), Windows 8.1 only has FLIP_SEQUENTIAL.
+	const DXGI_SWAP_EFFECT flip_swap_effect = m_dxgi_factory.try_query<IDXGIFactory4>() ?
+	                                              DXGI_SWAP_EFFECT_FLIP_DISCARD :
+	                                              DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 	swap_chain_desc.SwapEffect =
-		m_using_flip_model_swap_chain ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
+		m_using_flip_model_swap_chain ? flip_swap_effect : DXGI_SWAP_EFFECT_DISCARD;
 
 	m_using_allow_tearing = (m_allow_tearing_supported && m_using_flip_model_swap_chain && !m_is_exclusive_fullscreen);
 	if (m_using_allow_tearing)

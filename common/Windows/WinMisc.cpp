@@ -80,6 +80,11 @@ std::string GetOSVersionString()
 		retval += IsWindowsServer() ? "Windows Server 2016+" : "Windows 10+";
 		
 	}
+	else if (IsWindows8Point1OrGreater())
+	{
+		retval = "Microsoft ";
+		retval += IsWindowsServer() ? "Windows Server 2012 R2" : "Windows 8.1";
+	}
 	else
 		retval = "Unsupported Operating System!";
 

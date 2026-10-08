@@ -18,23 +18,27 @@
 namespace D3D
 {
 	// create a dxgi factory
-	wil::com_ptr_nothrow<IDXGIFactory5> CreateFactory(bool debug);
+	// only DXGI 1.2 is guaranteed, as Windows 8.1 doesn't have IDXGIFactory5
+	wil::com_ptr_nothrow<IDXGIFactory2> CreateFactory(bool debug);
+
+	// returns true if d3d12.dll is present (i.e. not Windows 8.1), and loads it
+	bool IsD3D12Available();
 
 	// returns a list of all adapter information
-	std::vector<GSAdapterInfo> GetAdapterInfo(IDXGIFactory5* factory);
+	std::vector<GSAdapterInfo> GetAdapterInfo(IDXGIFactory2* factory);
 
 	// returns the fullscreen mode to use for the specified dimensions
-	bool GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, HWND window_hwnd, u32 width, u32 height,
+	bool GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory2* factory, HWND window_hwnd, u32 width, u32 height,
 		float refresh_rate, DXGI_FORMAT format, DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output);
 
 	// get an adapter based on name
-	wil::com_ptr_nothrow<IDXGIAdapter1> GetAdapterByName(IDXGIFactory5* factory, const std::string_view name);
+	wil::com_ptr_nothrow<IDXGIAdapter1> GetAdapterByName(IDXGIFactory2* factory, const std::string_view name);
 
 	// returns the first adapter in the system
-	wil::com_ptr_nothrow<IDXGIAdapter1> GetFirstAdapter(IDXGIFactory5* factory);
+	wil::com_ptr_nothrow<IDXGIAdapter1> GetFirstAdapter(IDXGIFactory2* factory);
 
 	// returns the adapter specified in the configuration, or the default
-	wil::com_ptr_nothrow<IDXGIAdapter1> GetChosenOrFirstAdapter(IDXGIFactory5* factory, const std::string_view name);
+	wil::com_ptr_nothrow<IDXGIAdapter1> GetChosenOrFirstAdapter(IDXGIFactory2* factory, const std::string_view name);
 
 	// returns a utf-8 string of the specified adapter's name
 	std::string GetAdapterName(IDXGIAdapter1* adapter);

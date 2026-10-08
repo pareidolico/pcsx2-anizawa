@@ -289,7 +289,14 @@ bool GSDevice12::CreateDevice(u32& vendor_id)
 {
 	bool enable_debug_layer = GSConfig.UseDebugDevice;
 
-	m_dxgi_factory = D3D::CreateFactory(GSConfig.UseDebugDevice);
+	if (!D3D::IsD3D12Available())
+	{
+		Host::ReportErrorAsync("GS", "Direct3D 12 is not supported on this version of Windows.");
+		return false;
+	}
+
+	if (const auto factory = D3D::CreateFactory(GSConfig.UseDebugDevice))
+		m_dxgi_factory = factory.try_query<IDXGIFactory5>();
 	if (!m_dxgi_factory)
 		return false;
 

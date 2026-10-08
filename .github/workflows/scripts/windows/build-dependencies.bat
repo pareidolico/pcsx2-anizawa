@@ -385,6 +385,12 @@ echo Building Qt base...
 rmdir /S /Q "qtbase-everywhere-src-%QT%"
 %SEVENZIP% x "qtbase-everywhere-src-%QT%.zip" || goto error
 cd "qtbase-everywhere-src-%QT%" || goto error
+rem Qt 6 only runs on Windows 10+. For Windows 8.1, point QTBASE_OVERLAY at a directory of patched qtbase
+rem sources matching %QT% (e.g. from a "Qt 6 for Windows 7/8" compatibility project) to copy over the tree.
+if defined QTBASE_OVERLAY (
+  echo Applying qtbase overlay from %QTBASE_OVERLAY%...
+  xcopy /E /Y /I "%QTBASE_OVERLAY%" . || goto error
+)
 cmake -B build -DFEATURE_sql=OFF -DCMAKE_INSTALL_PREFIX="%INSTALLDIR%" %FORCEPDB% -DINPUT_gui=yes -DINPUT_widgets=yes -DINPUT_ssl=yes -DINPUT_openssl=no -DINPUT_schannel=yes -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON -DQT_FEATURE_windows_ioring=OFF %QTBUILDSPEC% || goto error
 cmake --build build --parallel || goto error
 ninja -C build install || goto error

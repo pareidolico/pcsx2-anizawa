@@ -138,6 +138,7 @@ if(WIN32)
 		Windows/WinThreads.cpp
 		Windows/WinHostSys.cpp
 		Windows/WinMisc.cpp
+		Windows/WinPlaceholderMemory.h
 	)
 
 	if (ARCH_X86)

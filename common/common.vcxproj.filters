@@ -156,6 +156,9 @@
     <ClInclude Include="HostSys.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Windows\WinPlaceholderMemory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="emitter\implement\group1.h">
       <Filter>Header Files</Filter>
     </ClInclude>

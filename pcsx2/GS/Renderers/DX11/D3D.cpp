@@ -29,18 +29,30 @@
 
 static u32 s_next_bad_shader_id = 1;
 
-wil::com_ptr_nothrow<IDXGIFactory5> D3D::CreateFactory(bool debug)
+wil::com_ptr_nothrow<IDXGIFactory2> D3D::CreateFactory(bool debug)
 {
 	UINT flags = 0;
 	if (debug)
 		flags |= DXGI_CREATE_FACTORY_DEBUG;
 
-	wil::com_ptr_nothrow<IDXGIFactory5> factory;
+	wil::com_ptr_nothrow<IDXGIFactory2> factory;
 	const HRESULT hr = CreateDXGIFactory2(flags, IID_PPV_ARGS(factory.put()));
 	if (FAILED(hr))
 		Console.Error("D3D: Failed to create DXGI factory: %08X", hr);
 
 	return factory;
+}
+
+bool D3D::IsD3D12Available()
+{
+	// d3d12.dll is delay loaded, so make sure it exists before calling anything from it.
+	static const bool available = []() {
+		const HMODULE module = LoadLibraryExW(L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+		if (!module)
+			Console.Warning("D3D: d3d12.dll is not available, Direct3D 12 can't be used.");
+		return (module != nullptr);
+	}();
+	return available;
 }
 
 static std::string FixupDuplicateAdapterNames(const std::vector<GSAdapterInfo>& adapters, std::string adapter_name)
@@ -62,7 +74,7 @@ static std::string FixupDuplicateAdapterNames(const std::vector<GSAdapterInfo>& 
 	return adapter_name;
 }
 
-std::vector<GSAdapterInfo> D3D::GetAdapterInfo(IDXGIFactory5* factory)
+std::vector<GSAdapterInfo> D3D::GetAdapterInfo(IDXGIFactory2* factory)
 {
 	std::vector<GSAdapterInfo> adapters;
 
@@ -124,7 +136,7 @@ std::vector<GSAdapterInfo> D3D::GetAdapterInfo(IDXGIFactory5* factory)
 	return adapters;
 }
 
-bool D3D::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, HWND window_hwnd, u32 width,
+bool D3D::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory2* factory, HWND window_hwnd, u32 width,
 	u32 height, float refresh_rate, DXGI_FORMAT format, DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output)
 {
 	// We need to find which monitor the window is located on.
@@ -197,7 +209,7 @@ bool D3D::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, HWND w
 	return true;
 }
 
-wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetAdapterByName(IDXGIFactory5* factory, const std::string_view name)
+wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetAdapterByName(IDXGIFactory2* factory, const std::string_view name)
 {
 	if (name.empty() || name == GetDefaultAdapter())
 		return {};
@@ -234,7 +246,7 @@ wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetAdapterByName(IDXGIFactory5* factory
 	return {};
 }
 
-wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetFirstAdapter(IDXGIFactory5* factory)
+wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetFirstAdapter(IDXGIFactory2* factory)
 {
 	wil::com_ptr_nothrow<IDXGIAdapter1> adapter;
 	HRESULT hr = factory->EnumAdapters1(0, adapter.put());
@@ -244,7 +256,7 @@ wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetFirstAdapter(IDXGIFactory5* factory)
 	return adapter;
 }
 
-wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetChosenOrFirstAdapter(IDXGIFactory5* factory, const std::string_view name)
+wil::com_ptr_nothrow<IDXGIAdapter1> D3D::GetChosenOrFirstAdapter(IDXGIFactory2* factory, const std::string_view name)
 {
 	wil::com_ptr_nothrow<IDXGIAdapter1> adapter = GetAdapterByName(factory, name);
 	if (!adapter)
@@ -353,6 +365,10 @@ GSRendererType D3D::GetPreferredRenderer()
 
 	// If we somehow can't get a D3D11 device, it's unlikely any of the renderers are going to work.
 	if (!adapter)
+		return GSRendererType::DX11;
+
+	// No D3D12 on Windows 8.1, and its D3D11 doesn't know about feature level 12_0 either.
+	if (!IsD3D12Available())
 		return GSRendererType::DX11;
 
 	const auto get_d3d11_feature_level = [&adapter]() -> std::optional<D3D_FEATURE_LEVEL> {
@@ -648,6 +664,11 @@ wil::com_ptr_nothrow<ID3DBlob> D3D::CompileShaderDXIL(D3D::ShaderType type, D3D:
 	// Compile Shader.
 	wil::com_ptr_nothrow<IDxcCompiler3> compiler;
 	DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(compiler.put()));
+	if (!compiler)
+	{
+		Console.Error("D3D: Failed to create DXC compiler instance.");
+		return {};
+	}
 
 	const DxcBuffer source{code.data(), code.length(), DXC_CP_UTF8};
 	wil::com_ptr_nothrow<IDxcResult> results;
