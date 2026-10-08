@@ -12,7 +12,8 @@ on:
       os:
         required: false
         type: string
-        default: windows-2025-vs2026
+        # windows-2022 has VS 2022. The VS 2026 runtime only supports Windows 10+, which breaks Windows 8.1.
+        default: windows-2022
       platform:
         required: false
         type: string
